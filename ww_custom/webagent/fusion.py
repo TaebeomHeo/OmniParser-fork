@@ -23,11 +23,17 @@ def _iou(a: list[float], b: list[float]) -> float:
 # 인터랙티브 요소를 찾는 CSS 선택자
 INTERACTIVE_SELECTOR = "a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [tabindex]"
 
-async def _get_interactive_elements(page) -> list[dict]:
+async def _get_interactive_elements(page, viewport_only: bool = True) -> list[dict]:
     """
     Playwright 1.58+ 호환: locator 기반으로 인터랙티브 요소 + bounding_box 수집
     (page.accessibility.snapshot() 대체)
+
+    Args:
+        page: Playwright Page 객체
+        viewport_only: True면 현재 뷰포트 내 요소만 반환 (OmniParser와 범위 일치)
     """
+    vw = page.viewport_size["width"]
+    vh = page.viewport_size["height"]
     results = []
     try:
         locators = await page.locator(INTERACTIVE_SELECTOR).all()
@@ -36,6 +42,16 @@ async def _get_interactive_elements(page) -> list[dict]:
                 bb = await loc.bounding_box(timeout=500)
                 if not bb or bb["width"] == 0 or bb["height"] == 0:
                     continue
+
+                # 뷰포트 필터링: 요소가 화면 밖이면 스킵
+                if viewport_only:
+                    # 요소의 우하단이 화면 좌상단보다 왼쪽/위에 있으면 스킵
+                    if bb["x"] + bb["width"] < 0 or bb["y"] + bb["height"] < 0:
+                        continue
+                    # 요소의 좌상단이 화면 우하단보다 오른쪽/아래에 있으면 스킵
+                    if bb["x"] > vw or bb["y"] > vh:
+                        continue
+
                 role = await loc.get_attribute("role") or ""
                 aria_label = await loc.get_attribute("aria-label") or ""
                 text = (await loc.inner_text()).strip()[:80] if not aria_label else ""

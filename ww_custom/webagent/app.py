@@ -36,7 +36,7 @@ args = parse_args()
 
 # ── Gradio UI ──────────────────────────────────────────────────────────
 def run_agent(task: str, start_url: str, max_steps: int):
-    """동기 래퍼: Gradio 콜백에서 asyncio 루프 실행"""    
+    """동기 래퍼: Gradio 콜백에서 asyncio 루프 실행 (태스크 완료 후 브라우저 유지)"""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         return "❌ OPENAI_API_KEY가 .env 파일에 설정되지 않았습니다."
@@ -44,30 +44,32 @@ def run_agent(task: str, start_url: str, max_steps: int):
 
     def log_cb(msg: str):
         logs.append(msg)
-        # generator yield는 Gradio streaming에서 처리
         print(msg)
 
     async def _run():
-        async with async_playwright() as pw:
-            # persistent context: cache, cookies, localStorage 유지
-            context = await pw.chromium.launch_persistent_context(
-                user_data_dir=str(BROWSER_DATA_DIR),
-                headless=False,
-                viewport={"width": 1280, "height": 800},
-                locale="ko-KR",
-            )
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto(start_url, wait_until="domcontentloaded")
-            await web_agent_loop(
-                page=page,
-                task=task,
-                omniparser_url=args.omniparser_url,
-                api_key=api_key,
-                model=args.model,
-                max_steps=int(max_steps),
-                output_callback=log_cb,
-            )
-            await context.close()
+        pw = await async_playwright().start()
+        # persistent context: cache, cookies, localStorage 유지
+        context = await pw.chromium.launch_persistent_context(
+            user_data_dir=str(BROWSER_DATA_DIR),
+            headless=False,
+            viewport={"width": 1280, "height": 800},
+            locale="ko-KR",
+        )
+        page = context.pages[0] if context.pages else await context.new_page()
+        await page.goto(start_url, wait_until="domcontentloaded")
+        await web_agent_loop(
+            page=page,
+            task=task,
+            omniparser_url=args.omniparser_url,
+            api_key=api_key,
+            model=args.model,
+            max_steps=int(max_steps),
+            output_callback=log_cb,
+        )
+        # 태스크 완료 후 브라우저 닫지 않음 - 사용자가 직접 확인 가능
+        log_cb("\n🔍 브라우저가 열려있습니다. 결과를 확인 후 수동으로 닫아주세요.")
+        # context.close() 호출 안함 - 브라우저 유지
+        # pw.stop() 호출 안함 - playwright 유지
 
     asyncio.run(_run())
     return "\n".join(logs)
