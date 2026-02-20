@@ -27,7 +27,7 @@ MARKDOWN = """
 OmniParser is a screen parsing tool to convert general GUI screen to structured elements. 
 """
 
-DEVICE = torch.device('cuda')
+DEVICE = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 
 # @spaces.GPU
 # @torch.inference_mode()
