@@ -182,3 +182,81 @@ def to_screen_info(fused_elements: list[dict]) -> str:
         src = "✓" if el["source"] == "both" else "~"
         lines.append(f"  Element {el['id']:3d} {src} {role} {label}")
     return "\n".join(lines)
+
+
+# 모든 인터랙티브 요소에 빨간 테두리 표시용 JavaScript
+DRAW_ALL_BOXES_JS = """
+(elements) => {
+    // 기존 하이라이트 모두 제거
+    document.querySelectorAll('.webagent-box').forEach(el => el.remove());
+
+    elements.forEach((el, idx) => {
+        const div = document.createElement('div');
+        div.className = 'webagent-box';
+        div.style.cssText = `
+            position: fixed;
+            left: ${el.x}px;
+            top: ${el.y}px;
+            width: ${el.width}px;
+            height: ${el.height}px;
+            border: 2px solid ${el.source === 'both' ? 'red' : 'orange'};
+            background: transparent;
+            pointer-events: none;
+            z-index: 999999;
+            box-sizing: border-box;
+        `;
+        // ID 라벨
+        const label = document.createElement('span');
+        label.style.cssText = `
+            position: absolute;
+            top: -16px;
+            left: 0;
+            background: ${el.source === 'both' ? 'red' : 'orange'};
+            color: white;
+            font-size: 10px;
+            padding: 1px 3px;
+            font-family: monospace;
+        `;
+        label.textContent = el.id;
+        div.appendChild(label);
+        document.body.appendChild(div);
+    });
+}
+"""
+
+CLEAR_ALL_BOXES_JS = """
+() => {
+    document.querySelectorAll('.webagent-box').forEach(el => el.remove());
+}
+"""
+
+
+async def draw_element_boxes(page, fused_elements: list[dict], interactive_only: bool = True):
+    """
+    감지된 요소들에 빨간/주황 테두리 표시
+    - both (OmniParser + AX Tree): 빨간색
+    - omni_only: 주황색
+    """
+    vw = page.viewport_size["width"]
+    vh = page.viewport_size["height"]
+
+    elements_data = []
+    for el in fused_elements:
+        if interactive_only and not el["interactivity"]:
+            continue
+        bbox = el["bbox"]
+        elements_data.append({
+            "id": el["id"],
+            "x": bbox[0] * vw,
+            "y": bbox[1] * vh,
+            "width": (bbox[2] - bbox[0]) * vw,
+            "height": (bbox[3] - bbox[1]) * vh,
+            "source": el["source"],
+        })
+
+    await page.evaluate(DRAW_ALL_BOXES_JS, elements_data)
+
+
+async def clear_element_boxes(page):
+    """모든 요소 테두리 제거"""
+    await page.evaluate(CLEAR_ALL_BOXES_JS)

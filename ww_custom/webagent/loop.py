@@ -14,7 +14,7 @@ import base64
 import httpx
 from playwright.async_api import Page
 
-from fusion import fuse, to_screen_info
+from fusion import fuse, to_screen_info, draw_element_boxes, clear_element_boxes
 from executor import WebExecutor
 from agent.vlm_agent import VLMAgent
 
@@ -74,6 +74,11 @@ async def web_agent_loop(
         log("🔗 Playwright 요소 융합 중...")
         fused_elements = await fuse(page, omni_elements, log=log, verbose=True)
         interactive = [e for e in fused_elements if e["interactivity"]]
+
+        # 모든 인터랙티브 요소에 빨간/주황 테두리 표시
+        log("🔴 요소 시각화 중...")
+        await draw_element_boxes(page, fused_elements, interactive_only=True)
+        log(f"   표시됨: 빨간색=이중확인(both), 주황색=OmniParser만")
 
         screen_info = to_screen_info(fused_elements)
 
