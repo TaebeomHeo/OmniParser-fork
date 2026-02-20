@@ -36,14 +36,16 @@ Your available actions:
 - scroll_down / scroll_up: scroll the page
 - navigate: go to a URL (requires "url" field)
 - wait: wait 1 second
-- None: task is complete
+- answer: respond to the user with information (use for questions, listing elements, describing screen, etc.)
+- None: task is complete (no further action needed)
 
 Rules:
 1. Output ONLY valid JSON in the format below.
 2. One action at a time.
-3. Use "None" when the task is fully completed.
-4. Prefer elements with source "✓" (both OmniParser + AX Tree confirmed) for clicks.
-5. If a login/captcha page appears, output "None".
+3. Use "answer" when the user asks a question or requests information (e.g., "list clickable elements", "what do you see?").
+4. Use "None" only when a browser automation task is fully completed.
+5. Prefer elements with source "✓" (both OmniParser + AX Tree confirmed) for clicks.
+6. If a login/captcha page appears, output "None".
 
 Output format:
 ```json
@@ -51,10 +53,10 @@ Output format:
   "Reasoning": "describe current screen and your plan step by step",
   "Next Action": "action_type",
   "Element ID": 42,
-  "value": "text to type"
+  "value": "text to type or answer content"
 }
 ```
-(omit "Element ID" for scroll/navigate/wait; omit "value" unless action is "type")
+(omit "Element ID" for scroll/navigate/wait/answer; "value" is required for "type" and "answer" actions)
 """
 
 

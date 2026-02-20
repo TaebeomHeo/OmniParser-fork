@@ -34,6 +34,12 @@ class WebExecutor:
             self.output_callback("✅ 태스크 완료")
             return True
 
+        if action == "answer":
+            # 사용자 질문에 대한 응답 출력
+            answer_text = action_json.get("value", action_json.get("Reasoning", ""))
+            self.output_callback(f"\n💬 답변:\n{answer_text}")
+            return True
+
         # 요소 조회
         el: dict | None = None
         if "Element ID" in action_json:
