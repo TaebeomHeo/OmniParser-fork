@@ -59,11 +59,8 @@ async def web_agent_loop(
         log(f"\n{'='*50}")
         log(f"Step {step}/{max_steps}")
 
-        # ── 1. 병렬: 스크린샷 + AX Tree 수집 ──────────────────
-        screenshot_bytes, ax_snapshot = await asyncio.gather(
-            page.screenshot(full_page=False),
-            page.accessibility.snapshot(),
-        )
+        # ── 1. 스크린샷 수집 ─────────────────────────────────────
+        screenshot_bytes = await page.screenshot(full_page=False)
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode()
 
         # ── 2. OmniParser 분석 ─────────────────────────────────
@@ -73,9 +70,9 @@ async def web_agent_loop(
         som_image_b64 = omni_result.get("som_image_base64", screenshot_b64)
         log(f"   감지 요소: {len(omni_elements)}개")
 
-        # ── 3. Fusion Layer ────────────────────────────────────
-        log("🔗 AX Tree 융합 중...")
-        fused_elements = await fuse(page, omni_elements, ax_snapshot)
+        # ── 3. Fusion Layer ──────────────────────────────────────────────
+        log("🔗 Playwright 요소 융합 중...")
+        fused_elements = await fuse(page, omni_elements)
         interactive = [e for e in fused_elements if e["interactivity"]]
         both_count = sum(1 for e in interactive if e["source"] == "both")
         log(f"   인터랙티브 요소: {len(interactive)}개 (이중확인: {both_count}개)")

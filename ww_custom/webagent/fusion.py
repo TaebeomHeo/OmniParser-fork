@@ -1,6 +1,7 @@
 """
 fusion.py
-OmniParser 결과와 Playwright AX Tree를 IoU 기반으로 병합합니다.
+OmniParser 결과와 Playwright 인터랙티브 요소를 IoU 기반으로 병합합니다.
+Playwright 1.58+ 호환 (page.accessibility 제거, locator 기반으로 대체)
 """
 from __future__ import annotations
 import asyncio
@@ -19,46 +20,51 @@ def _iou(a: list[float], b: list[float]) -> float:
     return inter / (area_a + area_b - inter)
 
 
-def _flatten_ax(node: dict, results: list[dict]) -> None:
-    """AX Tree를 재귀적으로 평탄화"""
-    if node.get("name") and node.get("role") not in ("none", "generic", "group", "region"):
-        results.append({
-            "role": node.get("role", ""),
-            "name": node.get("name", "").strip(),
-            "focusable": node.get("focusable", False),
-            "disabled": node.get("disabled", False),
-            "checked": node.get("checked"),
-            "expanded": node.get("expanded"),
-        })
-    for child in node.get("children", []):
-        _flatten_ax(child, results)
+# 인터랙티브 요소를 찾는 CSS 선택자
+INTERACTIVE_SELECTOR = "a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [tabindex]"
 
-
-async def _get_ax_bboxes(page, ax_nodes: list[dict]) -> list[dict]:
-    """AX 노드별 bounding_box를 Playwright에서 조회"""
+async def _get_interactive_elements(page) -> list[dict]:
+    """
+    Playwright 1.58+ 호환: locator 기반으로 인터랙티브 요소 + bounding_box 수집
+    (page.accessibility.snapshot() 대체)
+    """
     results = []
-    for node in ax_nodes:
-        try:
-            locator = page.get_by_role(node["role"], name=node["name"], exact=True)
-            bb = await locator.first.bounding_box(timeout=1000)
-            if bb:
+    try:
+        locators = await page.locator(INTERACTIVE_SELECTOR).all()
+        for loc in locators:
+            try:
+                bb = await loc.bounding_box(timeout=500)
+                if not bb or bb["width"] == 0 or bb["height"] == 0:
+                    continue
+                role = await loc.get_attribute("role") or ""
+                aria_label = await loc.get_attribute("aria-label") or ""
+                text = (await loc.inner_text()).strip()[:80] if not aria_label else ""
+                name = aria_label or text or ""
+                tag = await loc.evaluate("el => el.tagName.toLowerCase()")
+                # role 추론: HTML 태그 기반
+                if not role:
+                    role = {"a": "link", "button": "button", "input": "textbox",
+                            "select": "combobox", "textarea": "textbox"}.get(tag, "button")
                 results.append({
-                    **node,
+                    "role": role,
+                    "name": name,
+                    "tag": tag,
                     "bbox_px": [bb["x"], bb["y"], bb["x"] + bb["width"], bb["y"] + bb["height"]],
                 })
-        except Exception:
-            pass
+            except Exception:
+                continue
+    except Exception:
+        pass
     return results
 
 
 async def fuse(
     page,
     omni_elements: list[dict],
-    ax_snapshot: dict,
     iou_threshold: float = 0.3,
 ) -> list[dict]:
     """
-    OmniParser 결과와 AX Tree를 병합하여 fused_elements 반환.
+    OmniParser 결과와 Playwright 인터랙티브 요소 bounding_box를 IoU 병합.
 
     반환 형식:
     [
@@ -69,8 +75,7 @@ async def fuse(
         "interactivity": bool,
         "ax_role": str | None,
         "ax_name": str | None,
-        "ax_focusable": bool,
-        "source": "both" | "omni_only",  # both → locator 우선, omni_only → bbox fallback
+        "source": "both" | "omni_only",
         "iou_score": float,
       }
     ]
@@ -78,10 +83,8 @@ async def fuse(
     vw = page.viewport_size["width"]
     vh = page.viewport_size["height"]
 
-    # AX Tree 평탄화 + bounding_box 조회
-    ax_nodes: list[dict] = []
-    _flatten_ax(ax_snapshot, ax_nodes)
-    ax_with_bbox = await _get_ax_bboxes(page, ax_nodes)
+    # Playwright 인터랙티브 요소 + bounding_box 수집
+    interactive_els = await _get_interactive_elements(page)
 
     fused: list[dict] = []
     for i, omni_el in enumerate(omni_elements):
@@ -90,7 +93,7 @@ async def fuse(
 
         best_ax: dict | None = None
         best_score = 0.0
-        for ax in ax_with_bbox:
+        for ax in interactive_els:
             score = _iou(omni_px, ax["bbox_px"])
             if score > best_score:
                 best_score, best_ax = score, ax
@@ -103,7 +106,7 @@ async def fuse(
             "interactivity": omni_el.get("interactivity", False),
             "ax_role": best_ax["role"] if matched else None,
             "ax_name": best_ax["name"] if matched else None,
-            "ax_focusable": best_ax.get("focusable", False) if matched else False,
+            "ax_tag": best_ax.get("tag") if matched else None,
             "source": "both" if matched else "omni_only",
             "iou_score": round(best_score, 3),
         })
