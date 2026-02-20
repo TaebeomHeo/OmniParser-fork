@@ -4,6 +4,34 @@ OmniParser가 스크린샷에서 추출한 **bbox 좌표 + content 레이블**�
 
 ---
 
+## 🏗️ 전체 파이프라인
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  1. playwright: page.goto(url)                          │
+│  2. playwright: screenshot = page.screenshot()          │
+│  3. omniparser: parse(screenshot)                       │
+│     └─ icons[] with bbox + content + interactivity      │
+│  4. LLM: "어떤 버튼을 클릭해야 하나?" 결정              │
+│     └─ 예) "TV & AV 클릭" → icon 42 선택               │
+│  5. 연결 방법 선택:                                      │
+│     (A) 단순 → page.mouse.click(center_x, center_y)     │
+│     (B) 견고 → locator IoU 매칭 → locator.click()       │
+│     (C) 하이브리드 → content로 ax-tree 검색 후 클릭     │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 📌 실전 권장 방식
+
+| 상황              | 추천 방법                            |
+| ----------------- | ------------------------------------ |
+| 단순 클릭 자동화  | 방법 1 (bbox → mouse.click)          |
+| 텍스트 링크/버튼  | 방법 2 (content → ax-tree name 매칭) |
+| 복잡한 동적 UI    | 방법 3 (IoU 매칭 → locator.click)    |
+| 프로덕션 에이전트 | 방법 2 + 3 혼합, bbox를 fallback으로 |
+
+---
+
 ## 📌 개념 구조
 
 ```
