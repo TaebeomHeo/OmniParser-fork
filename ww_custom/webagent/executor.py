@@ -14,9 +14,56 @@ def _center_px(bbox: list[float], page) -> tuple[float, float]:
     return (bbox[0] + bbox[2]) / 2 * vw, (bbox[1] + bbox[3]) / 2 * vh
 
 
+def _bbox_to_px(bbox: list[float], page) -> dict:
+    """비율 bbox를 픽셀 좌표로 변환"""
+    vw = page.viewport_size["width"]
+    vh = page.viewport_size["height"]
+    return {
+        "x": bbox[0] * vw,
+        "y": bbox[1] * vh,
+        "width": (bbox[2] - bbox[0]) * vw,
+        "height": (bbox[3] - bbox[1]) * vh,
+    }
+
+
+# 빨간 사각형 하이라이트용 JavaScript
+HIGHLIGHT_JS = """
+(rect) => {
+    // 기존 하이라이트 제거
+    const old = document.getElementById('webagent-highlight');
+    if (old) old.remove();
+
+    // 새 하이라이트 생성
+    const div = document.createElement('div');
+    div.id = 'webagent-highlight';
+    div.style.cssText = `
+        position: fixed;
+        left: ${rect.x}px;
+        top: ${rect.y}px;
+        width: ${rect.width}px;
+        height: ${rect.height}px;
+        border: 3px solid red;
+        background: rgba(255, 0, 0, 0.15);
+        pointer-events: none;
+        z-index: 999999;
+        box-sizing: border-box;
+    `;
+    document.body.appendChild(div);
+}
+"""
+
+REMOVE_HIGHLIGHT_JS = """
+() => {
+    const el = document.getElementById('webagent-highlight');
+    if (el) el.remove();
+}
+"""
+
+
 class WebExecutor:
-    def __init__(self, output_callback=None):
+    def __init__(self, output_callback=None, highlight_duration: float = 1.0):
         self.output_callback = output_callback or print
+        self.highlight_duration = highlight_duration  # 하이라이트 표시 시간(초)
 
     async def execute(self, page, action_json: dict, fused_elements: list[dict]) -> bool:
         """
@@ -48,6 +95,10 @@ class WebExecutor:
             el = matches[0] if matches else None
 
         self.output_callback(f"▶ {action}" + (f" → Element {eid}" if el else ""))
+
+        # 선택된 요소 빨간 사각형으로 하이라이트
+        if el:
+            await self._highlight_element(page, el)
 
         try:
             match action:
@@ -121,3 +172,14 @@ class WebExecutor:
         cx, cy = _center_px(el["bbox"], page)
         await page.mouse.click(cx, cy)
         await page.keyboard.type(value)
+
+    async def _highlight_element(self, page, el: dict):
+        """선택된 요소에 빨간 사각형 하이라이트 표시"""
+        try:
+            rect = _bbox_to_px(el["bbox"], page)
+            await page.evaluate(HIGHLIGHT_JS, rect)
+            self.output_callback(f"   🔴 하이라이트: [{el['id']}] {el.get('ax_name') or el.get('omni_content') or ''}".strip())
+            await asyncio.sleep(self.highlight_duration)
+            await page.evaluate(REMOVE_HIGHLIGHT_JS)
+        except Exception as e:
+            self.output_callback(f"   ⚠️ 하이라이트 실패: {e}")
