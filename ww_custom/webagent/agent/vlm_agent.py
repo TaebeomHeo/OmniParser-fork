@@ -5,8 +5,12 @@ omnitool/gradio/agent/vlm_agent.py 를 웹 에이전트용으로 단순화한 �
 """
 from __future__ import annotations
 import json
+import os
 import re
+from dotenv import load_dotenv
 from openai import OpenAI
+
+load_dotenv()  # .env 자동 로드
 
 
 def _extract_json(text: str) -> dict:
@@ -55,9 +59,13 @@ Output format:
 
 
 class VLMAgent:
-    def __init__(self, api_key: str, model: str = "gpt-4o", output_callback=None):
-        self.client = OpenAI(api_key=api_key)
-        self.model = model
+    def __init__(self, model: str = "gpt-4o", api_key: str | None = None, output_callback=None):
+        # api_key: 명시적 전달 > .env OPENAI_API_KEY > 환경변수 순서
+        resolved_key = api_key or os.getenv("OPENAI_API_KEY", "")
+        if not resolved_key:
+            raise ValueError("OPENAI_API_KEY를 .env 파일 또는 환경변수로 설정해주세요.")
+        self.client = OpenAI(api_key=resolved_key)
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o")
         self.output_callback = output_callback or print
         self.step = 0
 

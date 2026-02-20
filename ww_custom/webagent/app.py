@@ -3,22 +3,26 @@ app.py
 WebAgent Gradio UI.
 
 실행:
-  python app.py --omniparser_url localhost:8000 --openai_api_key sk-...
+  python app.py
+  (API 키는 .env 파일의 OPENAI_API_KEY에서 자동 로드)
 """
 from __future__ import annotations
 import argparse
 import asyncio
-import threading
+import os
 import gradio as gr
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 from loop import web_agent_loop
+
+# .env 로드 (없으면 환경변수 그대로 사용)
+load_dotenv()
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--omniparser_url", default="localhost:8000")
-    p.add_argument("--openai_api_key", default="")
-    p.add_argument("--model", default="gpt-4o")
+    p.add_argument("--omniparser_url", default=os.getenv("OMNIPARSER_URL", "localhost:8000"))
+    p.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4o"))
     p.add_argument("--start_url", default="https://www.google.com")
     p.add_argument("--port", type=int, default=7862)
     return p.parse_args()
@@ -27,8 +31,11 @@ def parse_args():
 args = parse_args()
 
 # ── Gradio UI ──────────────────────────────────────────────────────────
-def run_agent(task: str, start_url: str, api_key: str, max_steps: int):
-    """동기 래퍼: Gradio 콜백에서 asyncio 루프 실행"""
+def run_agent(task: str, start_url: str, max_steps: int):
+    """동기 래퍼: Gradio 콜백에서 asyncio 루프 실행"""    
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return "❌ OPENAI_API_KEY가 .env 파일에 설정되지 않았습니다."
     logs: list[str] = []
 
     def log_cb(msg: str):
@@ -45,7 +52,7 @@ def run_agent(task: str, start_url: str, api_key: str, max_steps: int):
                 page=page,
                 task=task,
                 omniparser_url=args.omniparser_url,
-                api_key=api_key or args.openai_api_key,
+                api_key=api_key,
                 model=args.model,
                 max_steps=int(max_steps),
                 output_callback=log_cb,
@@ -57,7 +64,12 @@ def run_agent(task: str, start_url: str, api_key: str, max_steps: int):
 
 
 with gr.Blocks(title="WebAgent") as demo:
-    gr.Markdown("# 🌐 WebAgent\nOmniParser + Playwright AX Tree 기반 웹 자동화 에이전트")
+    gr.Markdown(
+        "# 🌐 WebAgent\n"
+        "OmniParser + Playwright AX Tree 기반 웹 자동화 에이전트\n\n"
+        f"> 모델: `{args.model}` | OmniParser: `{args.omniparser_url}`  "
+        "| API Key: `.env` 파일에서 자동 로드"
+    )
 
     with gr.Row():
         with gr.Column():
@@ -67,10 +79,6 @@ with gr.Blocks(title="WebAgent") as demo:
             task_input = gr.Textbox(
                 label="태스크 (자연어)", lines=3,
                 placeholder="예) TV & AV 메뉴를 클릭하고 첫 번째 제품 페이지로 이동해줘"
-            )
-            api_key_input = gr.Textbox(
-                label="OpenAI API Key", type="password",
-                value=args.openai_api_key, placeholder="sk-..."
             )
             max_steps_input = gr.Slider(
                 label="최대 스텝", minimum=1, maximum=50, step=1, value=15
@@ -84,7 +92,7 @@ with gr.Blocks(title="WebAgent") as demo:
 
     run_btn.click(
         fn=run_agent,
-        inputs=[task_input, start_url_input, api_key_input, max_steps_input],
+        inputs=[task_input, start_url_input, max_steps_input],
         outputs=[log_output],
     )
 

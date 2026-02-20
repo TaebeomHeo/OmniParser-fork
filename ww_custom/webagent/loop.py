@@ -49,7 +49,7 @@ async def web_agent_loop(
         output_callback: 로그 출력 콜백
     """
     log = output_callback or print
-    agent = VLMAgent(api_key=api_key, model=model, output_callback=log)
+    agent = VLMAgent(model=model, api_key=api_key, output_callback=log)
     executor = WebExecutor(output_callback=log)
     history: list[dict] = []
 
