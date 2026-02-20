@@ -190,7 +190,8 @@ DRAW_ALL_BOXES_JS = """
     // 기존 하이라이트 모두 제거
     document.querySelectorAll('.webagent-box').forEach(el => el.remove());
 
-    elements.forEach((el, idx) => {
+    elements.forEach((el) => {
+        const color = el.source === 'both' ? '#ff0000' : '#ff8c00';
         const div = document.createElement('div');
         div.className = 'webagent-box';
         div.style.cssText = `
@@ -199,25 +200,30 @@ DRAW_ALL_BOXES_JS = """
             top: ${el.y}px;
             width: ${el.width}px;
             height: ${el.height}px;
-            border: 2px solid ${el.source === 'both' ? 'red' : 'orange'};
-            background: transparent;
+            border: 2px solid ${color};
+            background: ${color}22;
             pointer-events: none;
             z-index: 999999;
             box-sizing: border-box;
         `;
-        // ID 라벨
+        // ID + 라벨
         const label = document.createElement('span');
+        const labelText = el.label ? `${el.id}: ${el.label}` : `${el.id}`;
         label.style.cssText = `
             position: absolute;
-            top: -16px;
+            top: 0;
             left: 0;
-            background: ${el.source === 'both' ? 'red' : 'orange'};
+            background: ${color};
             color: white;
-            font-size: 10px;
-            padding: 1px 3px;
+            font-size: 9px;
+            padding: 1px 4px;
             font-family: monospace;
+            white-space: nowrap;
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         `;
-        label.textContent = el.id;
+        label.textContent = labelText;
         div.appendChild(label);
         document.body.appendChild(div);
     });
@@ -231,29 +237,38 @@ CLEAR_ALL_BOXES_JS = """
 """
 
 
-async def draw_element_boxes(page, fused_elements: list[dict], interactive_only: bool = True):
+async def draw_element_boxes(page, fused_elements: list[dict], interactive_only: bool = True, log=None):
     """
     감지된 요소들에 빨간/주황 테두리 표시
     - both (OmniParser + AX Tree): 빨간색
     - omni_only: 주황색
     """
+    _log = log or (lambda x: None)
     vw = page.viewport_size["width"]
     vh = page.viewport_size["height"]
+    _log(f"   뷰포트 크기: {vw}x{vh}")
 
     elements_data = []
     for el in fused_elements:
         if interactive_only and not el["interactivity"]:
             continue
         bbox = el["bbox"]
+        # bbox는 비율값 [x1, y1, x2, y2] (0~1 범위)
+        x = bbox[0] * vw
+        y = bbox[1] * vh
+        w = (bbox[2] - bbox[0]) * vw
+        h = (bbox[3] - bbox[1]) * vh
         elements_data.append({
             "id": el["id"],
-            "x": bbox[0] * vw,
-            "y": bbox[1] * vh,
-            "width": (bbox[2] - bbox[0]) * vw,
-            "height": (bbox[3] - bbox[1]) * vh,
+            "x": x,
+            "y": y,
+            "width": w,
+            "height": h,
             "source": el["source"],
+            "label": (el.get("ax_name") or el.get("omni_content") or "")[:20],
         })
 
+    _log(f"   시각화 요소: {len(elements_data)}개")
     await page.evaluate(DRAW_ALL_BOXES_JS, elements_data)
 
 

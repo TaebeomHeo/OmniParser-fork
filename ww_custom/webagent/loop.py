@@ -60,6 +60,9 @@ async def web_agent_loop(
         log(f"Step {step}/{max_steps}")
 
         # ── 1. 스크린샷 수집 ─────────────────────────────────────
+        # 기존 시각화 박스 제거 후 스크린샷 (OmniParser가 박스를 감지하지 않도록)
+        await clear_element_boxes(page)
+        await asyncio.sleep(0.1)  # DOM 업데이트 대기
         screenshot_bytes = await page.screenshot(full_page=False)
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode()
 
@@ -77,8 +80,8 @@ async def web_agent_loop(
 
         # 모든 인터랙티브 요소에 빨간/주황 테두리 표시
         log("🔴 요소 시각화 중...")
-        await draw_element_boxes(page, fused_elements, interactive_only=True)
-        log(f"   표시됨: 빨간색=이중확인(both), 주황색=OmniParser만")
+        await draw_element_boxes(page, fused_elements, interactive_only=True, log=log)
+        log(f"   🔴 빨간색=이중확인(both), 🟠 주황색=OmniParser만")
 
         screen_info = to_screen_info(fused_elements)
 
