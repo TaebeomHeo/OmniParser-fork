@@ -25,7 +25,7 @@ webagent/
 conda activate omni
 
 # Playwright 설치
-pip install playwright httpx openai
+pip install playwright httpx openai python-dotenv
 playwright install chromium
 
 # OmniParser 서버 실행 (별도 터미널)
