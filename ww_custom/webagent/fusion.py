@@ -62,6 +62,8 @@ async def fuse(
     page,
     omni_elements: list[dict],
     iou_threshold: float = 0.3,
+    log=None,
+    verbose: bool = False,
 ) -> list[dict]:
     """
     OmniParser 결과와 Playwright 인터랙티브 요소 bounding_box를 IoU 병합.
@@ -80,13 +82,30 @@ async def fuse(
       }
     ]
     """
+    _log = log or (lambda x: None)
     vw = page.viewport_size["width"]
     vh = page.viewport_size["height"]
+
+    # ── OmniParser 요소 로깅 ──
+    if verbose:
+        _log(f"\n📊 OmniParser 감지 요소 ({len(omni_elements)}개):")
+        for i, el in enumerate(omni_elements):
+            content = el.get("content", "")[:40]
+            inter = "✓" if el.get("interactivity") else "·"
+            _log(f"   [{i:3d}] {inter} {content}")
 
     # Playwright 인터랙티브 요소 + bounding_box 수집
     interactive_els = await _get_interactive_elements(page)
 
+    # ── Playwright 요소 로깅 ──
+    if verbose:
+        _log(f"\n🌐 Playwright 인터랙티브 요소 ({len(interactive_els)}개):")
+        for j, ax in enumerate(interactive_els):
+            name = (ax.get("name") or "")[:40]
+            _log(f"   [{j:3d}] <{ax.get('tag', '?')}> [{ax.get('role')}] {name}")
+
     fused: list[dict] = []
+    matched_count = 0
     for i, omni_el in enumerate(omni_elements):
         b = omni_el["bbox"]
         omni_px = [b[0] * vw, b[1] * vh, b[2] * vw, b[3] * vh]
@@ -99,6 +118,8 @@ async def fuse(
                 best_score, best_ax = score, ax
 
         matched = best_score >= iou_threshold
+        if matched:
+            matched_count += 1
         fused.append({
             "id": i,
             "bbox": omni_el["bbox"],
@@ -110,6 +131,26 @@ async def fuse(
             "source": "both" if matched else "omni_only",
             "iou_score": round(best_score, 3),
         })
+
+    # ── Fusion 결과 요약 ──
+    if verbose:
+        interactive_fused = [e for e in fused if e["interactivity"]]
+        both_fused = [e for e in interactive_fused if e["source"] == "both"]
+        omni_only_fused = [e for e in interactive_fused if e["source"] == "omni_only"]
+        _log(f"\n🔗 Fusion 결과:")
+        _log(f"   OmniParser 전체: {len(omni_elements)}개")
+        _log(f"   Playwright 전체: {len(interactive_els)}개")
+        _log(f"   인터랙티브 요소: {len(interactive_fused)}개")
+        _log(f"   ├─ 이중확인(both): {len(both_fused)}개")
+        _log(f"   └─ OmniParser만: {len(omni_only_fused)}개")
+
+        _log(f"\n📋 최종 인터랙티브 요소 목록:")
+        for el in interactive_fused:
+            src = "✓" if el["source"] == "both" else "~"
+            role = el["ax_role"] or "icon"
+            label = el["ax_name"] or el["omni_content"] or "(unknown)"
+            label = label[:50]
+            _log(f"   [{el['id']:3d}] {src} [{role}] {label} (IoU:{el['iou_score']:.2f})")
 
     return fused
 

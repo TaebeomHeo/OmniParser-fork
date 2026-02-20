@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from pathlib import Path
 import gradio as gr
 from dotenv import load_dotenv, find_dotenv
 from playwright.async_api import async_playwright
@@ -17,6 +18,9 @@ from loop import web_agent_loop
 
 # .env 로드: 현재 디렉토리부터 상위로 탐색 (레포 루트 .env도 인식)
 load_dotenv(find_dotenv(usecwd=True))
+
+# 브라우저 데이터 저장 경로 (cache, cookies, localStorage 등)
+BROWSER_DATA_DIR = Path(__file__).parent / ".browser_data"
 
 
 def parse_args():
@@ -45,8 +49,14 @@ def run_agent(task: str, start_url: str, max_steps: int):
 
     async def _run():
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=False)
-            page = await browser.new_page(viewport={"width": 1280, "height": 800})
+            # persistent context: cache, cookies, localStorage 유지
+            context = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(BROWSER_DATA_DIR),
+                headless=False,
+                viewport={"width": 1280, "height": 800},
+                locale="ko-KR",
+            )
+            page = context.pages[0] if context.pages else await context.new_page()
             await page.goto(start_url, wait_until="domcontentloaded")
             await web_agent_loop(
                 page=page,
@@ -57,7 +67,7 @@ def run_agent(task: str, start_url: str, max_steps: int):
                 max_steps=int(max_steps),
                 output_callback=log_cb,
             )
-            await browser.close()
+            await context.close()
 
     asyncio.run(_run())
     return "\n".join(logs)

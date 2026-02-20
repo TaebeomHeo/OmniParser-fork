@@ -72,10 +72,8 @@ async def web_agent_loop(
 
         # ── 3. Fusion Layer ──────────────────────────────────────────────
         log("🔗 Playwright 요소 융합 중...")
-        fused_elements = await fuse(page, omni_elements)
+        fused_elements = await fuse(page, omni_elements, log=log, verbose=True)
         interactive = [e for e in fused_elements if e["interactivity"]]
-        both_count = sum(1 for e in interactive if e["source"] == "both")
-        log(f"   인터랙티브 요소: {len(interactive)}개 (이중확인: {both_count}개)")
 
         screen_info = to_screen_info(fused_elements)
 
