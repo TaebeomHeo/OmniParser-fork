@@ -11,12 +11,12 @@ import argparse
 import asyncio
 import os
 import gradio as gr
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from playwright.async_api import async_playwright
 from loop import web_agent_loop
 
-# .env 로드 (없으면 환경변수 그대로 사용)
-load_dotenv()
+# .env 로드: 현재 디렉토리부터 상위로 탐색 (레포 루트 .env도 인식)
+load_dotenv(find_dotenv(usecwd=True))
 
 
 def parse_args():

@@ -7,10 +7,10 @@ from __future__ import annotations
 import json
 import os
 import re
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
 
-load_dotenv()  # .env 자동 로드
+load_dotenv(find_dotenv(usecwd=True))  # .env 자동 탐색 로드
 
 
 def _extract_json(text: str) -> dict:
