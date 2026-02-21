@@ -139,6 +139,7 @@ async def fuse(
         fused.append({
             "id": i,
             "bbox": omni_el["bbox"],
+            "bbox_px": best_ax["bbox_px"] if matched else None,  # Playwright의 정확한 픽셀 좌표
             "omni_content": omni_el.get("content"),
             "interactivity": omni_el.get("interactivity", False),
             "ax_role": best_ax["role"] if matched else None,
@@ -196,99 +197,111 @@ def to_screen_info(fused_elements: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# 모든 인터랙티브 요소에 빨간 테두리 표시용 JavaScript
-DRAW_ALL_BOXES_JS = """
-(elements) => {
-    // 기존 하이라이트 모두 제거
-    document.querySelectorAll('.webagent-box').forEach(el => el.remove());
-
-    elements.forEach((el) => {
-        const color = el.source === 'both' ? '#ff0000' : '#ff8c00';
-        const div = document.createElement('div');
-        div.className = 'webagent-box';
-        div.style.cssText = `
-            position: fixed;
-            left: ${el.x}px;
-            top: ${el.y}px;
-            width: ${el.width}px;
-            height: ${el.height}px;
-            border: 2px solid ${color};
-            background: ${color}22;
-            pointer-events: none;
-            z-index: 999999;
-            box-sizing: border-box;
-        `;
-        // ID + 라벨
-        const label = document.createElement('span');
-        const labelText = el.label ? `${el.id}: ${el.label}` : `${el.id}`;
-        label.style.cssText = `
-            position: absolute;
-            top: 0;
-            left: 0;
-            background: ${color};
-            color: white;
-            font-size: 9px;
-            padding: 1px 4px;
-            font-family: monospace;
-            white-space: nowrap;
-            max-width: 150px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        `;
-        label.textContent = labelText;
-        div.appendChild(label);
-        document.body.appendChild(div);
+# 기존 요소 스타일 복원용
+CLEAR_ELEMENT_HIGHLIGHTS_JS = """
+() => {
+    // 하이라이트된 요소들 원래대로 복원
+    document.querySelectorAll('[data-webagent-highlighted]').forEach(el => {
+        el.style.outline = el.dataset.webagentOriginalOutline || '';
+        el.style.outlineOffset = '';
+        delete el.dataset.webagentHighlighted;
+        delete el.dataset.webagentOriginalOutline;
+        // 라벨 제거
+        const label = el.querySelector('.webagent-label');
+        if (label) label.remove();
     });
+    // fallback 오버레이 박스 제거
+    document.querySelectorAll('.webagent-box').forEach(el => el.remove());
 }
 """
 
-CLEAR_ALL_BOXES_JS = """
-() => {
-    document.querySelectorAll('.webagent-box').forEach(el => el.remove());
+# Fallback: OmniParser만 감지한 요소용 오버레이 (좌표 기반)
+DRAW_FALLBACK_BOX_JS = """
+(el) => {
+    const div = document.createElement('div');
+    div.className = 'webagent-box';
+    div.style.cssText = `
+        position: fixed;
+        left: ${el.x}px;
+        top: ${el.y}px;
+        width: ${el.width}px;
+        height: ${el.height}px;
+        outline: 3px solid #ff8c00;
+        outline-offset: -3px;
+        background: transparent;
+        pointer-events: none;
+        z-index: 999998;
+        box-sizing: border-box;
+    `;
+    document.body.appendChild(div);
 }
 """
 
 
 async def draw_element_boxes(page, fused_elements: list[dict], interactive_only: bool = True, log=None):
     """
-    감지된 요소들에 빨간/주황 테두리 표시
-    - both (OmniParser + AX Tree): 빨간색
-    - omni_only: 주황색
+    감지된 요소들에 테두리 표시
+    - both: Playwright bbox 사용 → 실제 DOM 요소에 빨간 outline
+    - omni_only: OmniParser bbox 사용 → 주황 오버레이 (fallback)
     """
     _log = log or (lambda x: None)
     vw = page.viewport_size["width"]
     vh = page.viewport_size["height"]
 
-    # 스크롤 오프셋 확인 (페이지가 스크롤된 경우 보정 필요)
-    scroll_y = await page.evaluate("window.scrollY")
-    _log(f"   뷰포트: {vw}x{vh}, scrollY: {scroll_y}")
+    both_count = 0
+    omni_only_count = 0
 
-    elements_data = []
     for el in fused_elements:
         if interactive_only and not el["interactivity"]:
             continue
-        bbox = el["bbox"]
-        # bbox는 비율값 [x1, y1, x2, y2] (0~1 범위)
-        # OmniParser는 스크린샷(뷰포트) 기준 좌표를 반환
-        # position:fixed는 뷰포트 기준이므로 그대로 사용
-        x = bbox[0] * vw
-        y = bbox[1] * vh
-        w = (bbox[2] - bbox[0]) * vw
-        h = (bbox[3] - bbox[1]) * vh
-        elements_data.append({
-            "id": el["id"],
-            "x": x,
-            "y": y,
-            "width": w,
-            "height": h,
-            "source": el["source"],
-            "label": (el.get("ax_name") or el.get("omni_content") or "")[:20],
-        })
 
-    _log(f"   시각화 요소: {len(elements_data)}개")
-    await page.evaluate(DRAW_ALL_BOXES_JS, elements_data)
+        el_id = el["id"]
+        label = (el.get("ax_name") or el.get("omni_content") or "")[:25]
+
+        if el["source"] == "both" and el.get("bbox_px"):
+            # Playwright bbox (정확) → 실제 DOM 요소 찾아서 outline 적용
+            bbox_px = el["bbox_px"]
+            cx = (bbox_px[0] + bbox_px[2]) / 2
+            cy = (bbox_px[1] + bbox_px[3]) / 2
+            await page.evaluate("""
+                ({cx, cy, elId, label}) => {
+                    const el = document.elementFromPoint(cx, cy);
+                    if (el && !el.dataset.webagentHighlighted) {
+                        el.dataset.webagentHighlighted = 'true';
+                        el.dataset.webagentOriginalOutline = el.style.outline || '';
+                        el.style.outline = '3px solid red';
+                        el.style.outlineOffset = '-1px';
+                        // 라벨 추가
+                        const lbl = document.createElement('span');
+                        lbl.className = 'webagent-label';
+                        lbl.style.cssText = `
+                            position: absolute; top: 0; left: 0; z-index: 999999;
+                            background: red; color: white; font-size: 10px;
+                            padding: 1px 4px; font-family: monospace; pointer-events: none;
+                        `;
+                        lbl.textContent = elId + ': ' + label;
+                        el.style.position = el.style.position || 'relative';
+                        el.appendChild(lbl);
+                    }
+                }
+            """, {"cx": cx, "cy": cy, "elId": el_id, "label": label})
+            both_count += 1
+        else:
+            # OmniParser bbox만 있음 → 오버레이 fallback
+            bbox = el["bbox"]
+            x = bbox[0] * vw
+            y = bbox[1] * vh
+            w = (bbox[2] - bbox[0]) * vw
+            h = (bbox[3] - bbox[1]) * vh
+            await page.evaluate(DRAW_FALLBACK_BOX_JS, {
+                "x": x, "y": y, "width": w, "height": h,
+                "id": el_id, "label": label
+            })
+            omni_only_count += 1
+
+    _log(f"   시각화: 🔴 DOM 직접 {both_count}개, 🟠 오버레이 {omni_only_count}개")
 
 
 async def clear_element_boxes(page):
-    """모든 요소 테두리 제거"""
-    await page.evaluate(CLEAR_ALL_BOXES_JS)
+    """모든 요소 테두리 제거 (DOM 하이라이트 + 오버레이 박스)"""
+    await page.evaluate(CLEAR_ELEMENT_HIGHLIGHTS_JS)
