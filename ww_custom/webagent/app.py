@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import gradio as gr
 from dotenv import load_dotenv, find_dotenv
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, BrowserContext, Playwright
 from loop import web_agent_loop
 
 # .env 로드: 현재 디렉토리부터 상위로 탐색 (레포 루트 .env도 인식)
@@ -21,6 +21,10 @@ load_dotenv(find_dotenv(usecwd=True))
 
 # 브라우저 데이터 저장 경로 (cache, cookies, localStorage 등)
 BROWSER_DATA_DIR = Path(__file__).parent / ".browser_data"
+
+# 전역 브라우저 인스턴스 (세션 간 재사용)
+_playwright: Playwright | None = None
+_browser_context: BrowserContext | None = None
 
 
 def parse_args():
@@ -34,9 +38,38 @@ def parse_args():
 
 args = parse_args()
 
+
+async def get_or_create_browser():
+    """브라우저 컨텍스트 반환 (없으면 생성, 있으면 재사용)"""
+    global _playwright, _browser_context
+
+    # 기존 컨텍스트가 유효한지 확인
+    if _browser_context is not None:
+        try:
+            # 페이지 접근으로 컨텍스트 유효성 확인
+            _ = _browser_context.pages
+            return _browser_context
+        except Exception:
+            # 컨텍스트가 닫혔음 - 새로 생성 필요
+            _browser_context = None
+
+    # Playwright 시작
+    if _playwright is None:
+        _playwright = await async_playwright().start()
+
+    # 새 브라우저 컨텍스트 생성
+    _browser_context = await _playwright.chromium.launch_persistent_context(
+        user_data_dir=str(BROWSER_DATA_DIR),
+        headless=False,
+        viewport={"width": 1280, "height": 800},
+        locale="ko-KR",
+    )
+    return _browser_context
+
+
 # ── Gradio UI ──────────────────────────────────────────────────────────
 def run_agent(task: str, start_url: str, max_steps: int):
-    """동기 래퍼: Gradio 콜백에서 asyncio 루프 실행 (태스크 완료 후 브라우저 유지)"""
+    """동기 래퍼: Gradio 콜백에서 asyncio 루프 실행 (브라우저 재사용)"""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         return "❌ OPENAI_API_KEY가 .env 파일에 설정되지 않았습니다."
@@ -47,16 +80,13 @@ def run_agent(task: str, start_url: str, max_steps: int):
         print(msg)
 
     async def _run():
-        pw = await async_playwright().start()
-        # persistent context: cache, cookies, localStorage 유지
-        context = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_DATA_DIR),
-            headless=False,
-            viewport={"width": 1280, "height": 800},
-            locale="ko-KR",
-        )
-        page = context.pages[0] if context.pages else await context.new_page()
+        # 브라우저 컨텍스트 가져오기 (기존 것 재사용 또는 새로 생성)
+        context = await get_or_create_browser()
+
+        # 새 페이지에서 URL 열기 (기존 탭은 유지)
+        page = await context.new_page()
         await page.goto(start_url, wait_until="domcontentloaded")
+
         await web_agent_loop(
             page=page,
             task=task,
@@ -66,12 +96,18 @@ def run_agent(task: str, start_url: str, max_steps: int):
             max_steps=int(max_steps),
             output_callback=log_cb,
         )
-        # 태스크 완료 후 브라우저 닫지 않음 - 사용자가 직접 확인 가능
-        log_cb("\n🔍 브라우저가 열려있습니다. 결과를 확인 후 수동으로 닫아주세요.")
-        # context.close() 호출 안함 - 브라우저 유지
-        # pw.stop() 호출 안함 - playwright 유지
+        log_cb("\n🔍 브라우저가 열려있습니다. 결과를 확인하세요. (다음 실행 시 재사용됨)")
 
-    asyncio.run(_run())
+    # 이벤트 루프 재사용 (이미 실행 중이면 기존 루프 사용)
+    try:
+        loop = asyncio.get_running_loop()
+        # 이미 루프가 실행 중이면 새 태스크로 실행
+        future = asyncio.ensure_future(_run())
+        loop.run_until_complete(future)
+    except RuntimeError:
+        # 루프가 없으면 새로 실행
+        asyncio.run(_run())
+
     return "\n".join(logs)
 
 
