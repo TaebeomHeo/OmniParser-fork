@@ -63,7 +63,16 @@ async def web_agent_loop(
         # 기존 시각화 박스 제거 후 스크린샷 (OmniParser가 박스를 감지하지 않도록)
         await clear_element_boxes(page)
         await asyncio.sleep(0.1)  # DOM 업데이트 대기
+
+        # 스크린샷 크기 디버깅
+        from PIL import Image
+        import io
         screenshot_bytes = await page.screenshot(full_page=False)
+        img = Image.open(io.BytesIO(screenshot_bytes))
+        log(f"📸 스크린샷 크기: {img.size[0]}x{img.size[1]} px")
+        log(f"   뷰포트 크기: {page.viewport_size['width']}x{page.viewport_size['height']} CSS px")
+        log(f"   스케일 비율: {img.size[0] / page.viewport_size['width']:.2f}x")
+
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode()
 
         # ── 2. OmniParser 분석 ─────────────────────────────────

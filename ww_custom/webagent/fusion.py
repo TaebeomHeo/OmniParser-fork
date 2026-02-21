@@ -160,6 +160,18 @@ async def fuse(
         _log(f"   ├─ 이중확인(both): {len(both_fused)}개")
         _log(f"   └─ OmniParser만: {len(omni_only_fused)}개")
 
+        # 좌표 비교 디버깅: 처음 3개 Playwright 요소 vs OmniParser 요소
+        _log(f"\n🔍 좌표 비교 (Playwright vs OmniParser):")
+        for j, ax in enumerate(interactive_els[:5]):
+            ax_box = ax["bbox_px"]
+            _log(f"   PW[{j}] {ax.get('name','')[:20]:20s} → bbox_px: [{ax_box[0]:.0f}, {ax_box[1]:.0f}, {ax_box[2]:.0f}, {ax_box[3]:.0f}]")
+
+        _log(f"   ---")
+        for i, el in enumerate(fused[:5]):
+            b = el["bbox"]
+            omni_px = [b[0]*vw, b[1]*vh, b[2]*vw, b[3]*vh]
+            _log(f"   OP[{i}] {el.get('omni_content','')[:20]:20s} → bbox_px: [{omni_px[0]:.0f}, {omni_px[1]:.0f}, {omni_px[2]:.0f}, {omni_px[3]:.0f}]")
+
         _log(f"\n📋 최종 인터랙티브 요소 목록:")
         for el in interactive_fused:
             src = "✓" if el["source"] == "both" else "~"
@@ -246,7 +258,10 @@ async def draw_element_boxes(page, fused_elements: list[dict], interactive_only:
     _log = log or (lambda x: None)
     vw = page.viewport_size["width"]
     vh = page.viewport_size["height"]
-    _log(f"   뷰포트 크기: {vw}x{vh}")
+
+    # 스크롤 오프셋 확인 (페이지가 스크롤된 경우 보정 필요)
+    scroll_y = await page.evaluate("window.scrollY")
+    _log(f"   뷰포트: {vw}x{vh}, scrollY: {scroll_y}")
 
     elements_data = []
     for el in fused_elements:
@@ -254,6 +269,8 @@ async def draw_element_boxes(page, fused_elements: list[dict], interactive_only:
             continue
         bbox = el["bbox"]
         # bbox는 비율값 [x1, y1, x2, y2] (0~1 범위)
+        # OmniParser는 스크린샷(뷰포트) 기준 좌표를 반환
+        # position:fixed는 뷰포트 기준이므로 그대로 사용
         x = bbox[0] * vw
         y = bbox[1] * vh
         w = (bbox[2] - bbox[0]) * vw
